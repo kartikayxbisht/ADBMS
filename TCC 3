@@ -1,0 +1,125 @@
+/* ================================================================
+   SETUP – run this once in either session
+   ================================================================ */
+DROP TABLE IF EXISTS StudentEnrollments;
+
+CREATE TABLE StudentEnrollments (
+    student_id      INT PRIMARY KEY,
+    student_name    VARCHAR(100) NOT NULL,
+    course_id       VARCHAR(10)  NOT NULL,
+    enrollment_date DATE NOT NULL
+);
+
+INSERT INTO StudentEnrollments VALUES
+(1,'Ashish','CSE101','2024-06-01'),
+(2,'Smaran','CSE102','2024-06-01'),
+(3,'Vaibhav','CSE103','2024-06-01');
+
+
+/* ================================================================
+   PART A – DEADLOCK SIMULATION
+   ================================================================ */
+/*
+Open two separate SQL clients (Session 1 and Session 2).
+Run these in the order shown to trigger a deadlock.
+*/
+
+/* -------- Session 1 -------- */
+START TRANSACTION;
+UPDATE StudentEnrollments
+SET enrollment_date = '2024-07-01'
+WHERE student_id = 1;   -- Locks row 1 first
+
+-- Without committing, run next:
+UPDATE StudentEnrollments
+SET enrollment_date = '2024-07-02'
+WHERE student_id = 2;   -- Will wait on Session 2
+
+/* -------- Session 2 -------- */
+START TRANSACTION;
+UPDATE StudentEnrollments
+SET enrollment_date = '2024-07-03'
+WHERE student_id = 2;   -- Locks row 2 first
+
+-- Attempt to lock row 1 (reverse order):
+UPDATE StudentEnrollments
+SET enrollment_date = '2024-07-04'
+WHERE student_id = 1;
+-- Database detects a deadlock and rolls back one transaction.
+
+
+/* ================================================================
+   PART B – MVCC SNAPSHOT READ
+   ================================================================ */
+/*
+Demonstrates that a reader sees a consistent snapshot even while
+a writer updates. Set isolation BEFORE starting the transaction.
+*/
+
+/* -------- Session 1 (Reader) -------- */
+-- Make sure no transaction is active
+ROLLBACK;
+
+-- Set isolation FIRST (this is what avoids the earlier error)
+SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+START TRANSACTION;
+SELECT enrollment_date
+FROM StudentEnrollments
+WHERE student_id = 1;  -- Expect: 2024-06-01
+-- Keep this transaction open, do NOT commit yet.
+
+/* -------- Session 2 (Writer) -------- */
+START TRANSACTION;
+UPDATE StudentEnrollments
+SET enrollment_date = '2024-07-10'
+WHERE student_id = 1;
+COMMIT;
+
+/* -------- Session 1 (still open) -------- */
+SELECT enrollment_date
+FROM StudentEnrollments
+WHERE student_id = 1;  -- Still shows 2024-06-01 (old snapshot)
+COMMIT;
+
+/* After Session 1 commits and runs SELECT again, it will show 2024-07-10 */
+
+
+/* ================================================================
+   PART C – LOCKING VS. MVCC
+   ================================================================ */
+
+/* Scenario 1: Traditional Locking – Reader blocks */
+
+/* -------- Session 1 -------- */
+START TRANSACTION;
+SELECT *
+FROM StudentEnrollments
+WHERE student_id = 1
+FOR UPDATE;  -- Explicit lock on the row
+-- Keep this transaction open.
+
+/* -------- Session 2 -------- */
+SELECT *
+FROM StudentEnrollments
+WHERE student_id = 1;
+-- This SELECT will block until Session 1 commits.
+
+
+/* Scenario 2: MVCC – Non-blocking snapshot read */
+
+/* -------- Session 1 -------- */
+ROLLBACK;  -- Ensure no active transaction
+START TRANSACTION;
+SELECT *
+FROM StudentEnrollments
+WHERE student_id = 1;   -- Normal snapshot read, no lock
+-- Keep this transaction open.
+
+/* -------- Session 2 -------- */
+UPDATE StudentEnrollments
+SET enrollment_date = '2024-08-01'
+WHERE student_id = 1;
+COMMIT;  -- Succeeds immediately; Session 1 still sees old snapshot
+
+/* After Session 1 commits and runs SELECT again, it will show 2024-08-01 */
