@@ -1,0 +1,84 @@
+-- ===============================
+-- SETUP
+-- ===============================
+DROP TABLE IF EXISTS StudentEnrollments;
+
+CREATE TABLE StudentEnrollments (
+    enrollment_id INT AUTO_INCREMENT PRIMARY KEY,
+    student_name  VARCHAR(100) NOT NULL,
+    course_id     VARCHAR(10)  NOT NULL,
+    enrollment_date DATE NOT NULL,
+    UNIQUE (student_name, course_id)  -- Prevent duplicate enrollments
+);
+
+-- Seed sample data
+INSERT INTO StudentEnrollments (student_name, course_id, enrollment_date) VALUES
+('Ashish',  'CSE101', '2024-07-01'),
+('Smaran',  'CSE102', '2024-07-01'),
+('Vaibhav', 'CSE101', '2024-07-01');
+
+-- ===============================
+-- PART A: Prevent Duplicate Enrollment
+-- ===============================
+-- Open SESSION 1 and SESSION 2 simultaneously
+
+-- Session 1
+START TRANSACTION;
+INSERT INTO StudentEnrollments (student_name, course_id, enrollment_date)
+VALUES ('Ashish', 'CSE101', CURDATE());
+COMMIT;
+
+-- Session 2 (run at same time as Session 1)
+START TRANSACTION;
+INSERT INTO StudentEnrollments (student_name, course_id, enrollment_date)
+VALUES ('Ashish', 'CSE101', CURDATE());
+-- This will fail with a UNIQUE constraint violation
+COMMIT;
+
+-- ===============================
+-- PART B: SELECT ... FOR UPDATE (Row Locking)
+-- ===============================
+-- Session 1
+START TRANSACTION;
+SELECT * FROM StudentEnrollments
+WHERE student_name = 'Ashish' AND course_id = 'CSE101'
+FOR UPDATE;
+-- Row is locked. Keep the transaction open.
+
+-- Session 2 (while Session 1 is still open)
+START TRANSACTION;
+UPDATE StudentEnrollments
+SET enrollment_date = '2024-07-05'
+WHERE student_name = 'Ashish' AND course_id = 'CSE101';
+-- This will WAIT until Session 1 COMMITs or ROLLBACKs
+COMMIT;
+
+-- Session 1 finally commits to release the lock
+COMMIT;
+
+-- ===============================
+-- PART C: Locking Preserves Consistency
+-- ===============================
+-- Session 1
+START TRANSACTION;
+SELECT * FROM StudentEnrollments
+WHERE enrollment_id = 1
+FOR UPDATE;
+UPDATE StudentEnrollments
+SET enrollment_date = '2024-07-10'
+WHERE enrollment_id = 1;
+COMMIT;
+
+-- Session 2
+START TRANSACTION;
+SELECT * FROM StudentEnrollments
+WHERE enrollment_id = 1
+FOR UPDATE;
+-- This SELECT will block until Session 1 commits
+UPDATE StudentEnrollments
+SET enrollment_date = '2024-07-15'
+WHERE enrollment_id = 1;
+COMMIT;
+
+-- Final check
+SELECT * FROM StudentEnrollments;
